@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mgrdata>
+  <plugin name="pmanore.php">
+    <group>payment_method</group>
+    <msg name="desc_short" lang="ru">anore</msg>
+    <msg name="desc_short" lang="en">anore</msg>
+    <msg name="desc_full" lang="ru">Приём платежей через anore</msg>
+    <msg name="desc_full" lang="en">Accept payments with anore</msg>
+    <msg name="price" lang="ru">Бесплатно</msg>
+    <msg name="price" lang="en">Free</msg>
+  </plugin>
+
+  <metadata name="paymethod.edit.anore.php" type="form">
+    <form>
+      <page name="methodprops">
+        <field name="api_url">
+          <input type="text" name="api_url" required="yes"/>
+        </field>
+        <field name="api_key">
+          <input type="password" name="api_key" private="yes" required="yes"/>
+        </field>
+        <field name="api_secret">
+          <input type="password" name="api_secret" private="yes"/>
+        </field>
+        <field name="webhook_secret">
+          <input type="password" name="webhook_secret" private="yes" required="yes"/>
+        </field>
+        <field name="shop_id">
+          <input type="text" name="shop_id"/>
+        </field>
+        <field name="methods">
+          <input type="text" name="methods"/>
+        </field>
+      </page>
+    </form>
+  </metadata>
+
+  <lang name="ru">
+    <messages name="label_paymethod">
+      <msg name="pmanore.php">anore</msg>
+      <msg name="module_pmanore.php">anore</msg>
+    </messages>
+    <messages name="paymethod.edit.anore.php">
+      <msg name="api_url">Адрес API</msg>
+      <msg name="hint_api_url">Обычно https://api.anore.cc</msg>
+      <msg name="api_key">API-ключ</msg>
+      <msg name="hint_api_key">Ключ магазина или аккаунта из личного кабинета anore</msg>
+      <msg name="api_secret">Секрет API</msg>
+      <msg name="hint_api_secret">Необязательный секрет подписи X-ZPay-Signature</msg>
+      <msg name="webhook_secret">Секрет вебхука</msg>
+      <msg name="hint_webhook_secret">Должен совпадать с секретом вебхука магазина в anore</msg>
+      <msg name="shop_id">ID магазина</msg>
+      <msg name="hint_shop_id">Укажите только для API-ключа уровня аккаунта</msg>
+      <msg name="methods">Методы оплаты</msg>
+      <msg name="hint_methods">Необязательно: sbp,yoomoney,crypto. Пусто — настройки магазина</msg>
+    </messages>
+  </lang>
+
+  <lang name="en">
+    <messages name="label_paymethod">
+      <msg name="pmanore.php">anore</msg>
+      <msg name="module_pmanore.php">anore</msg>
+    </messages>
+    <messages name="paymethod.edit.anore.php">
+      <msg name="api_url">API URL</msg>
+      <msg name="hint_api_url">Usually https://api.anore.cc</msg>
+      <msg name="api_key">API key</msg>
+      <msg name="hint_api_key">Store or account API key from the anore dashboard</msg>
+      <msg name="api_secret">API secret</msg>
+      <msg name="hint_api_secret">Optional X-ZPay-Signature secret</msg>
+      <msg name="webhook_secret">Webhook secret</msg>
+      <msg name="hint_webhook_secret">Must match the store webhook secret in anore</msg>
+      <msg name="shop_id">Store ID</msg>
+      <msg name="hint_shop_id">Required only for an account-level API key</msg>
+      <msg name="methods">Payment methods</msg>
+      <msg name="hint_methods">Optional: sbp,yoomoney,crypto. Empty uses the store settings</msg>
+    </messages>
+  </lang>
+</mgrdata>
