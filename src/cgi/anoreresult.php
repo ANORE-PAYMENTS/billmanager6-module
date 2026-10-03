@@ -3,104 +3,126 @@
 
 declare(strict_types=1);
 
-set_include_path(get_include_path() . PATH_SEPARATOR . '/usr/local/mgr5/include/php');
 define('__MODULE__', 'anoreresult');
-
-require_once 'bill_util.php';
-require_once 'anore_billmanager.php';
-
-if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
-    anoreBmRespond(405, 'Method Not Allowed');
-}
-
-$raw = (string) file_get_contents('php://input');
-if ($raw === '') {
-    anoreBmRespond(400, 'Empty body');
-}
+require_once dirname(__DIR__) . '/include/php/anore_billmanager.php';
 
 try {
+    require_once dirname(__DIR__) . '/include/php/bill_util.php';
+    if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
+        anoreBmRespond(405, 'Method Not Allowed');
+    }
+    $raw = anoreBmRawBody();
+    if ($raw === '') {
+        anoreBmRespond(400, 'Empty body');
+    }
     $payload = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
     if (!is_array($payload)) {
-        throw new RuntimeException('Invalid payload');
+        throw new AnoreBmRequestException(400, 'Invalid payload');
+    }
+    $event = anoreBmString($payload, 'event');
+    $orderId = anoreBmString($payload, 'orderId');
+    parse_str((string) ($_SERVER['QUERY_STRING'] ?? ''), $query);
+    if ($orderId !== '') {
+        $paymentId = anoreBmPaymentIdFromOrder($orderId);
+        if (isset($query['payment']) && anoreBmPaymentId($query['payment']) !== $paymentId) {
+            throw new AnoreBmRequestException(422, 'Callback payment ID does not match');
+        }
+    } elseif (isset($query['payment'])) {
+        $paymentId = anoreBmPaymentId($query['payment']);
+    } else {
+        $paymentId = anoreBmPaymentIdFromUuid(anoreBmString($payload, 'id'));
     }
 
-    $orderId = trim((string) ($payload['orderId'] ?? ''));
-    $paymentId = anoreBmPaymentIdFromOrder($orderId);
-    $state = anoreBmLoadState($paymentId);
-    $stateName = is_array($state) ? (string) ($state['state'] ?? '') : '';
-    if (!in_array($stateName, ['ready', 'paid', 'expired'], true)) {
-        throw new RuntimeException('Anore payment mapping was not found');
-    }
-
-    $info = LocalQuery('payment.info', ['elid' => $paymentId]);
-    $payment = anoreBmPayment($info);
-    $paymethod = anoreBmPaymethod($payment);
-    $webhookSecret = trim((string) $paymethod->webhook_secret);
-    $signature = anoreBmSignatureHeader();
-    if ($webhookSecret === '' || !preg_match('/^[a-f0-9]{64}$/', $signature)) {
-        anoreBmRespond(401, 'Invalid signature');
-    }
-    $expected = hash_hmac('sha256', $raw, $webhookSecret);
-    if (!hash_equals($expected, $signature)) {
-        anoreBmRespond(401, 'Invalid signature');
-    }
-
-    $anorePaymentId = trim((string) ($payload['id'] ?? ''));
-    if ($anorePaymentId === '' || !hash_equals((string) ($state['anorePaymentId'] ?? ''), $anorePaymentId)) {
-        throw new RuntimeException('Anore payment ID does not match the saved mapping');
-    }
-    if (!hash_equals((string) ($state['orderId'] ?? ''), $orderId)) {
-        throw new RuntimeException('Anore order ID does not match the saved mapping');
-    }
-
-    $amount = isset($payload['amount']) && is_numeric($payload['amount'])
-        ? number_format((float) $payload['amount'], 2, '.', '')
-        : '';
-    $currency = strtoupper(trim((string) ($payload['currency'] ?? '')));
-    if ($amount === '' || !hash_equals((string) ($state['amount'] ?? ''), $amount)) {
-        throw new RuntimeException('Anore amount does not match the saved mapping');
-    }
-    if ($currency === '' || !hash_equals((string) ($state['currency'] ?? ''), $currency)) {
-        throw new RuntimeException('Anore currency does not match the saved mapping');
-    }
-
-    $event = trim((string) ($payload['event'] ?? ''));
-    if (in_array($event, ['payment.succeeded', 'payment.expired'], true)) {
-        anoreBmWithLock($paymentId, static function () use ($event, $paymentId): void {
-            $lockedState = anoreBmLoadState($paymentId);
-            $lockedStateName = is_array($lockedState) ? (string) ($lockedState['state'] ?? '') : '';
-            if (!is_array($lockedState) || !in_array($lockedStateName, ['ready', 'paid', 'expired'], true)) {
-                throw new RuntimeException('Anore payment mapping was not found');
+    anoreBmWithLock($paymentId, static function () use ($paymentId, $payload, $event, $orderId, $raw): void {
+        $payment = anoreBmPayment(anoreBmQuery('payment.info', ['elid' => $paymentId]));
+        $paymethod = anoreBmPaymethod($payment);
+        anoreBmVerifySignature($raw, trim((string) $paymethod->webhook_secret));
+        if (!in_array($event, ['payment.succeeded', 'payment.expired'], true)) {
+            return;
+        }
+        $state = anoreBmLoadState($paymentId);
+        if ($state === null) {
+            throw new AnoreBmRequestException(422, 'Anore payment mapping was not found');
+        }
+        $uuid = anoreBmUuid(anoreBmString($payload, 'id'));
+        $index = null;
+        foreach ($state['attempts'] as $i => $attempt) {
+            if (($attempt['anorePaymentId'] ?? '') === $uuid) {
+                $index = $i;
+                break;
             }
-
-            if ($event === 'payment.succeeded') {
-                if ($lockedStateName !== 'paid') {
-                    LocalQuery('payment.setpaid', ['elid' => $paymentId]);
-                    $lockedState['state'] = 'paid';
-                    $lockedState['paidAt'] = gmdate(DATE_ATOM);
-                    anoreBmStoreState($paymentId, $lockedState);
+        }
+        if ($index === null) {
+            foreach ($state['attempts'] as $attempt) {
+                if ($attempt['state'] === 'initializing') {
+                    throw new AnoreBmRequestException(503, 'Anore invoice creation is not reconciled');
                 }
-                return;
             }
-
-            if ($lockedStateName === 'paid') {
-                return;
+            throw new AnoreBmRequestException(422, 'Anore payment ID does not match');
+        }
+        $attempt = $state['attempts'][$index];
+        if ($orderId !== '' && !hash_equals((string) $attempt['orderId'], $orderId)) {
+            throw new AnoreBmRequestException(422, 'Anore order ID does not match');
+        }
+        $amount = anoreBmAmount($payload['amount'] ?? null);
+        $currency = strtoupper(anoreBmString($payload, 'currency'));
+        if (!hash_equals((string) $attempt['amount'], $amount) || !hash_equals((string) $attempt['currency'], $currency)) {
+            throw new AnoreBmRequestException(422, 'Anore amount or currency does not match');
+        }
+        $billingStatus = (int) $payment->status;
+        $externalId = trim((string) $payment->externalid);
+        if ($event === 'payment.expired' && $billingStatus === 4) {
+            return;
+        }
+        if ($billingStatus === 4) {
+            $legacyCredit = !empty($attempt['legacy']) && $attempt['state'] === 'paid' && $externalId === '';
+            if ($externalId !== $uuid && !$legacyCredit) {
+                throw new AnoreBmRequestException(422, 'BILLmanager payment was credited by another transaction');
             }
-            if ($lockedStateName !== 'expired') {
-                LocalQuery('payment.setnopay', ['elid' => $paymentId]);
-                $lockedState['state'] = 'expired';
-                $lockedState['expiredAt'] = gmdate(DATE_ATOM);
-                anoreBmStoreState($paymentId, $lockedState);
+            $state['attempts'][$index]['state'] = 'paid';
+            $state['attempts'][$index]['paidAt'] = $attempt['paidAt'] ?? gmdate(DATE_ATOM);
+            $state['attempts'][$index]['creditConfirmed'] = true;
+            anoreBmStoreState($paymentId, $state);
+            return;
+        }
+        if ($attempt['state'] === 'paid'
+            && ($event !== 'payment.succeeded' || empty($attempt['legacy']) || !empty($attempt['creditConfirmed']))) {
+            throw new AnoreBmRequestException(422, 'BILLmanager credit changed; manual reconciliation is required');
+        }
+        if ($event === 'payment.succeeded') {
+            if (!in_array($billingStatus, [1, 2, 8], true)) {
+                throw new AnoreBmRequestException(422, 'BILLmanager payment is not eligible for credit');
             }
-        });
-        anoreBmRespond(200, 'OK');
-    }
-
-    anoreBmRespond(200, 'Ignored');
+            if (anoreBmAmount((string) $payment->paymethodamount) !== $amount || anoreBmCurrency($payment) !== $currency
+                || (isset($attempt['paymethodId']) && $attempt['paymethodId'] !== trim((string) $paymethod->id))) {
+                throw new AnoreBmRequestException(422, 'BILLmanager invoice changed; manual reconciliation is required');
+            }
+            anoreBmQuery('payment.setpaid', ['elid' => $paymentId, 'sok' => 'ok', 'externalid' => $uuid,
+                'info' => 'Anore payment ' . $uuid]);
+            $confirmed = anoreBmPayment(anoreBmQuery('payment.info', ['elid' => $paymentId]));
+            if ((int) $confirmed->status !== 4 || trim((string) $confirmed->externalid) !== $uuid) {
+                throw new AnoreBmRequestException(503, 'BILLmanager credit could not be confirmed');
+            }
+            $state['attempts'][$index]['state'] = 'paid';
+            $state['attempts'][$index]['paidAt'] = gmdate(DATE_ATOM);
+            $state['attempts'][$index]['creditConfirmed'] = true;
+            anoreBmStoreState($paymentId, $state);
+            return;
+        }
+        if ($attempt['state'] !== 'expired') {
+            if ($index === count($state['attempts']) - 1 && in_array($billingStatus, [1, 2, 8], true)) {
+                anoreBmQuery('payment.setnopay', ['elid' => $paymentId, 'sok' => 'ok', 'externalid' => $uuid]);
+            }
+            $state['attempts'][$index]['state'] = 'expired';
+            $state['attempts'][$index]['expiredAt'] = gmdate(DATE_ATOM);
+            anoreBmStoreState($paymentId, $state);
+        }
+    });
+    anoreBmRespond(200, in_array($event, ['payment.succeeded', 'payment.expired'], true) ? 'OK' : 'Ignored');
 } catch (JsonException $error) {
-    Debug('Anore webhook JSON error: ' . $error->getMessage());
     anoreBmRespond(400, 'Invalid JSON');
 } catch (Throwable $error) {
-    Debug('Anore webhook rejected: ' . $error->getMessage());
-    anoreBmRespond(400, 'Invalid webhook');
+    anoreBmLog('Anore webhook failed: ' . $error->getMessage());
+    $status = $error instanceof AnoreBmRequestException ? $error->httpStatus : 503;
+    anoreBmRespond($status, $status === 503 ? 'Temporary failure; retry later' : 'Invalid webhook');
 }
