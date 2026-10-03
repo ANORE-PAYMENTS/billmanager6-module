@@ -3,9 +3,10 @@
 
 declare(strict_types=1);
 
-set_include_path(get_include_path() . PATH_SEPARATOR . '/usr/local/mgr5/include/php');
+set_include_path(get_include_path() . PATH_SEPARATOR . dirname(__DIR__) . '/include/php');
 define('__MODULE__', 'pmanore');
 
+require_once 'anore_billmanager.php';
 require_once 'bill_util.php';
 
 $options = getopt('', ['command:', 'payment:']);
@@ -28,13 +29,17 @@ try {
 
     if ($command === 'pmvalidate') {
         $form = simplexml_load_string((string) file_get_contents('php://stdin'));
-        $apiUrl = rtrim(trim((string) $form->api_url), '/');
+        if (!$form instanceof SimpleXMLElement) {
+            throw new ISPErrorException('value');
+        }
         $apiKey = trim((string) $form->api_key);
         $shopId = trim((string) $form->shop_id);
         $webhookSecret = trim((string) $form->webhook_secret);
 
-        if (!preg_match('#^https://[^\s]+$#i', $apiUrl)) {
-            throw new ISPErrorException('value', 'api_url', $apiUrl);
+        try {
+            $form->api_url = anoreBmApiUrl((string) $form->api_url);
+        } catch (Throwable $error) {
+            throw new ISPErrorException('value', 'api_url', (string) $form->api_url);
         }
         if ($apiKey === '') {
             throw new ISPErrorException('value', 'api_key', '');
@@ -45,6 +50,11 @@ try {
         if ($webhookSecret === '') {
             throw new ISPErrorException('value', 'webhook_secret', '');
         }
+        try {
+            $form->methods = implode(',', anoreBmMethods((string) $form->methods));
+        } catch (Throwable $error) {
+            throw new ISPErrorException('value', 'methods', (string) $form->methods);
+        }
 
         echo $form->asXML();
         exit;
@@ -52,6 +62,10 @@ try {
 
     throw new ISPErrorException('unknown command');
 } catch (Throwable $error) {
-    echo $error;
+    if ($error instanceof ISPErrorException) {
+        echo $error;
+    } else {
+        Debug('Anore module command failed: ' . $error->getMessage());
+        echo new ISPErrorException('value');
+    }
 }
-
