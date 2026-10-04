@@ -18,7 +18,7 @@ CGI-скрипты работают через PHP CLI: читают HTTP-зап
 На сервере BILLmanager:
 
 ```bash
-git clone https://github.com/roditsya/billmanager6-module.git
+git clone https://github.com/ANORE-PAYMENTS/billmanager6-module.git
 cd billmanager6-module
 sudo bash install.sh
 ```
