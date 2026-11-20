@@ -85,8 +85,9 @@ try {
             if ($enabled) {
                 anoreBmFranchise($form);
             }
-        } catch (Throwable $error) {
-            throw new ISPErrorException('value', 'franchise_enabled', (string) $form->franchise_enabled);
+        } catch (AnoreBmFieldException $error) {
+            $field = $error->field;
+            throw new ISPErrorException('value', $field, (string) $form->{$field});
         }
 
         echo $form->asXML();

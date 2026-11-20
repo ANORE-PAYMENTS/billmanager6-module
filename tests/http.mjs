@@ -734,6 +734,26 @@ try {
     assert.match(saved.stdout, /<franchise_enabled>on<\/franchise_enabled>/)
     assert.match(saved.stdout, /<franchise_type>website<\/franchise_type>/)
   }, { mapping: false })
+  await test('paymethod validation maps franchise errors to their actual fields', async () => {
+    for (const [field, value] of [
+      ['franchise_address', 'https://branch.example.com/path'],
+      ['franchise_owner_telegram_id', '+123'],
+    ]) {
+      const document = {
+        api_key: 'fixture-key', webhook_secret: 'fixture-secret', identity_source: 'email',
+        franchise_enabled: 'on', franchise_type: 'website', franchise_address: 'https://branch.example.com',
+        franchise_owner_telegram_id: '123456789',
+      }
+      document[field] = value
+      const xml = `<doc>${Object.entries(document).map(([name, entry]) => `<${name}>${entry}</${name}>`).join('')}</doc>`
+      const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
+        input: xml, env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+      })
+      assert.equal(validation.status, 0, validation.stderr)
+      assert.match(validation.stdout, new RegExp(`value: ${field}=`))
+      assert.doesNotMatch(validation.stdout, /value: franchise_enabled=/)
+    }
+  }, { mapping: false })
   await test('paymethod validation supplies safe context defaults', async () => {
     const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
       input: '<doc><api_key>fixture-key</api_key><webhook_secret>fixture-secret</webhook_secret><methods>DVNET,xrocket</methods></doc>',
