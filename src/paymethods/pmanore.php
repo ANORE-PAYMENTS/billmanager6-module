@@ -55,6 +55,20 @@ try {
         } catch (Throwable $error) {
             throw new ISPErrorException('value', 'methods', (string) $form->methods);
         }
+        try {
+            $form->identity_source = anoreBmIdentitySource((string) $form->identity_source);
+        } catch (Throwable $error) {
+            throw new ISPErrorException('value', 'identity_source', (string) $form->identity_source);
+        }
+        try {
+            $enabled = anoreBmEnabled((string) $form->franchise_enabled);
+            $form->franchise_enabled = $enabled ? 'on' : 'off';
+            if ($enabled) {
+                anoreBmFranchise($form);
+            }
+        } catch (Throwable $error) {
+            throw new ISPErrorException('value', 'franchise_enabled', (string) $form->franchise_enabled);
+        }
 
         echo $form->asXML();
         exit;

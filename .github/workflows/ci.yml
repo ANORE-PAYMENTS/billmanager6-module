@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} integration
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.4']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json, simplexml
+          coverage: none
+      - name: Validate XML
+        run: xmllint --noout src/etc/xml/billmgr_mod_pmanore.php.xml
+      - name: Run isolated integration tests
+        run: node tests/http.mjs
+
+  release-archive:
+    name: Reproducible release archive
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Build archive twice and verify reproducibility
+        env:
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          scripts/build-release.sh dist/first
+          scripts/build-release.sh dist/second
+          cmp dist/first/billmanager6-module.tar.gz dist/second/billmanager6-module.tar.gz
+          cmp dist/first/billmanager6-module.tar.gz.sha256 dist/second/billmanager6-module.tar.gz.sha256
+          sha256sum --check --directory dist/first dist/first/billmanager6-module.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: billmanager6-module-${{ github.sha }}
+          path: |
+            dist/first/billmanager6-module.tar.gz
+            dist/first/billmanager6-module.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
