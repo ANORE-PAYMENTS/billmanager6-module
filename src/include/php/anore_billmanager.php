@@ -15,6 +15,17 @@ class AnoreBmRequestException extends RuntimeException
     }
 }
 
+class AnoreBmFieldException extends AnoreBmRequestException
+{
+    public $field;
+
+    public function __construct(string $field, string $message)
+    {
+        parent::__construct(422, $message);
+        $this->field = $field;
+    }
+}
+
 function anoreBmLog(string $message): void
 {
     try {
@@ -219,7 +230,7 @@ function anoreBmEnabled(string $value): bool
     if (in_array($value, ['1', 'on', 'yes', 'true'], true)) {
         return true;
     }
-    throw new AnoreBmRequestException(422, 'Invalid franchise enabled setting');
+    throw new AnoreBmFieldException('franchise_enabled', 'Invalid franchise enabled setting');
 }
 
 function anoreBmTelegramId(string $value): string
@@ -228,52 +239,52 @@ function anoreBmTelegramId(string $value): string
     if (!preg_match('/^[1-9][0-9]{0,18}$/D', $value)
         || strlen($value) > 19
         || (strlen($value) === 19 && strcmp($value, '9223372036854775807') > 0)) {
-        throw new AnoreBmRequestException(422, 'Invalid franchise owner Telegram ID');
+        throw new AnoreBmFieldException('franchise_owner_telegram_id', 'Invalid franchise owner Telegram ID');
     }
     return $value;
 }
 
-function anoreBmTelegramUsername(string $value, string $field): string
+function anoreBmTelegramUsername(string $value, string $field, string $message): string
 {
     $value = strtolower(trim($value));
     if (isset($value[0]) && $value[0] === '@') {
         $value = substr($value, 1);
     }
     if (!preg_match('/^[a-z0-9_]{5,32}$/D', $value)) {
-        throw new AnoreBmRequestException(422, 'Invalid ' . $field);
+        throw new AnoreBmFieldException($field, 'Invalid ' . $message);
     }
     return $value;
 }
 
-function anoreBmHttpsOrigin(string $value): string
+function anoreBmHttpsOrigin(string $value, string $field = 'franchise_address'): string
 {
     $value = trim($value);
     if ($value === '' || preg_match('/[\x00-\x20\x7f]/', $value)) {
-        throw new AnoreBmRequestException(422, 'Invalid franchise website origin');
+        throw new AnoreBmFieldException($field, 'Invalid franchise website origin');
     }
     $parts = parse_url($value);
     if (!is_array($parts) || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
         || empty($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])
         || isset($parts['query']) || isset($parts['fragment'])
         || (isset($parts['path']) && $parts['path'] !== '' && $parts['path'] !== '/')) {
-        throw new AnoreBmRequestException(422, 'Invalid franchise website origin');
+        throw new AnoreBmFieldException($field, 'Invalid franchise website origin');
     }
     $host = strtolower((string) $parts['host']);
     if (preg_match('/[^\x20-\x7e]/', $host)) {
         if (!function_exists('idn_to_ascii')) {
-            throw new AnoreBmRequestException(422, 'Internationalized franchise hostnames require PHP intl');
+            throw new AnoreBmFieldException($field, 'Internationalized franchise hostnames require PHP intl');
         }
         $flags = defined('IDNA_DEFAULT') ? IDNA_DEFAULT : 0;
         $variant = defined('INTL_IDNA_VARIANT_UTS46') ? INTL_IDNA_VARIANT_UTS46 : 1;
         $ascii = idn_to_ascii($host, $flags, $variant);
         if ($ascii === false) {
-            throw new AnoreBmRequestException(422, 'Invalid franchise website origin');
+            throw new AnoreBmFieldException($field, 'Invalid franchise website origin');
         }
         $host = strtolower($ascii);
     }
     if (filter_var($host, FILTER_VALIDATE_IP) === false
         && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) {
-        throw new AnoreBmRequestException(422, 'Invalid franchise website origin');
+        throw new AnoreBmFieldException($field, 'Invalid franchise website origin');
     }
     return 'https://' . $host;
 }
@@ -285,11 +296,12 @@ function anoreBmFranchise(SimpleXMLElement $paymethod): ?array
     }
     $type = strtolower(trim((string) $paymethod->franchise_type));
     if (!in_array($type, ['telegram_bot', 'website'], true)) {
-        throw new AnoreBmRequestException(422, 'Invalid franchise type');
+        throw new AnoreBmFieldException('franchise_type', 'Invalid franchise type');
     }
     $address = $type === 'telegram_bot'
-        ? anoreBmTelegramUsername((string) $paymethod->franchise_address, 'franchise Telegram bot address')
-        : anoreBmHttpsOrigin((string) $paymethod->franchise_address);
+        ? anoreBmTelegramUsername((string) $paymethod->franchise_address,
+            'franchise_address', 'franchise Telegram bot address')
+        : anoreBmHttpsOrigin((string) $paymethod->franchise_address, 'franchise_address');
     $result = [
         'type' => $type,
         'address' => $address,
@@ -297,7 +309,8 @@ function anoreBmFranchise(SimpleXMLElement $paymethod): ?array
     ];
     $username = trim((string) $paymethod->franchise_owner_telegram_username);
     if ($username !== '') {
-        $result['owner_telegram_username'] = anoreBmTelegramUsername($username, 'franchise owner Telegram username');
+        $result['owner_telegram_username'] = anoreBmTelegramUsername($username,
+            'franchise_owner_telegram_username', 'franchise owner Telegram username');
     }
     return $result;
 }
