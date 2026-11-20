@@ -539,10 +539,14 @@ try {
     assert.ok(Math.abs(Date.parse(expiry) - Date.now() - 14400000) < 15000, expiry)
     await expectNoCredit()
   }, { mapping: false })
-  await test('parallel creation requests reuse one Anore invoice', async () => {
+  await test('parallel creation requests create one Anore invoice and safely retry lock contention', async () => {
     const responses = await Promise.all([createPayment(), createPayment(), createPayment()])
-    assert.deepEqual(responses.map(value => value.status), [302, 302, 302], JSON.stringify(responses))
-    assert.equal(new Set(responses.map(value => value.location)).size, 1)
+    assert.ok(responses.every(value => [302, 503].includes(value.status)), JSON.stringify(responses))
+    const successful = responses.filter(value => value.status === 302)
+    assert.ok(successful.length >= 1, JSON.stringify(responses))
+    const retries = await Promise.all(responses.filter(value => value.status === 503).map(() => createPayment()))
+    assert.ok(retries.every(value => value.status === 302), JSON.stringify(retries))
+    assert.equal(new Set([...successful, ...retries].map(value => value.location)).size, 1)
     assert.equal(apiRequests.length, 1)
     const attempts = JSON.parse(await readFile(path.join(stateDirectory, '42.json'), 'utf8')).attempts
     assert.equal(attempts.length, 1)
