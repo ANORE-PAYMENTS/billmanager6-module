@@ -31,9 +31,36 @@
         <field name="methods">
           <input type="text" name="methods"/>
         </field>
+        <field name="identity_source">
+          <select name="identity_source" required="yes"/>
+        </field>
+        <field name="franchise_enabled">
+          <input type="checkbox" name="franchise_enabled"/>
+        </field>
+        <field name="franchise_type">
+          <select name="franchise_type"/>
+        </field>
+        <field name="franchise_address">
+          <input type="text" name="franchise_address"/>
+        </field>
+        <field name="franchise_owner_telegram_id">
+          <input type="text" name="franchise_owner_telegram_id"/>
+        </field>
+        <field name="franchise_owner_telegram_username">
+          <input type="text" name="franchise_owner_telegram_username"/>
+        </field>
       </page>
     </form>
   </metadata>
+
+  <slist name="identity_source">
+    <val key="email">identity_source_email</val>
+    <val key="external_id">identity_source_external_id</val>
+  </slist>
+  <slist name="franchise_type">
+    <val key="telegram_bot">franchise_type_telegram_bot</val>
+    <val key="website">franchise_type_website</val>
+  </slist>
 
   <lang name="ru">
     <messages name="label_paymethod">
@@ -53,6 +80,21 @@
       <msg name="hint_shop_id">Укажите только для API-ключа уровня аккаунта</msg>
       <msg name="methods">Методы оплаты</msg>
       <msg name="hint_methods">Необязательно: sbp,card,yoomoney,crypto,crypto-old. Пусто — настройки магазина; dvnet и xrocket тоже поддерживаются</msg>
+      <msg name="identity_source">Источник user_identity</msg>
+      <msg name="hint_identity_source">Email безопасен по умолчанию. External ID использует стабильный subaccount платежа BILLmanager</msg>
+      <msg name="identity_source_email">Email пользователя</msg>
+      <msg name="identity_source_external_id">Внешний ID клиента BILLmanager</msg>
+      <msg name="franchise_enabled">Передавать франшизу для каждого платежа</msg>
+      <msg name="hint_franchise_enabled">Включайте только когда режим франшизы включён для магазина anore</msg>
+      <msg name="franchise_type">Тип франшизы</msg>
+      <msg name="franchise_type_telegram_bot">Telegram-бот</msg>
+      <msg name="franchise_type_website">HTTPS-сайт</msg>
+      <msg name="franchise_address">Адрес франшизы</msg>
+      <msg name="hint_franchise_address">Имя Telegram-бота или канонический HTTPS origin без порта и пути</msg>
+      <msg name="franchise_owner_telegram_id">Telegram ID владельца</msg>
+      <msg name="hint_franchise_owner_telegram_id">Положительный ID до 9223372036854775807</msg>
+      <msg name="franchise_owner_telegram_username">Username владельца</msg>
+      <msg name="hint_franchise_owner_telegram_username">Необязательно: @ и 5–32 латинских букв, цифр или подчёркиваний</msg>
     </messages>
   </lang>
 
@@ -74,6 +116,21 @@
       <msg name="hint_shop_id">Required only for an account-level API key</msg>
       <msg name="methods">Payment methods</msg>
       <msg name="hint_methods">Optional: sbp,card,yoomoney,crypto,crypto-old. Empty uses the store settings; dvnet and xrocket aliases are supported</msg>
+      <msg name="identity_source">user_identity source</msg>
+      <msg name="hint_identity_source">Email is the safe default. External ID uses the stable BILLmanager payment subaccount</msg>
+      <msg name="identity_source_email">User email</msg>
+      <msg name="identity_source_external_id">BILLmanager client external ID</msg>
+      <msg name="franchise_enabled">Send franchise on every payment</msg>
+      <msg name="hint_franchise_enabled">Enable only when franchise mode is enabled for the anore store</msg>
+      <msg name="franchise_type">Franchise type</msg>
+      <msg name="franchise_type_telegram_bot">Telegram bot</msg>
+      <msg name="franchise_type_website">HTTPS website</msg>
+      <msg name="franchise_address">Franchise address</msg>
+      <msg name="hint_franchise_address">Telegram bot username or canonical HTTPS origin without a port or path</msg>
+      <msg name="franchise_owner_telegram_id">Owner Telegram ID</msg>
+      <msg name="hint_franchise_owner_telegram_id">Positive ID no greater than 9223372036854775807</msg>
+      <msg name="franchise_owner_telegram_username">Owner username</msg>
+      <msg name="hint_franchise_owner_telegram_username">Optional: @ plus 5–32 ASCII letters, digits, or underscores</msg>
     </messages>
   </lang>
 </mgrdata>

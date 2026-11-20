@@ -39,11 +39,13 @@ function baseState() {
     payment: {
       id: '42', paymethodamount: '123.45', amount: '123.45', number: 'INV-42', status: '1', paid: 'off',
       manager_url: managerUrl, email: 'customer@example.test', useremail: 'customer@example.test', externalid: '',
-      client: { id: '7', email: 'customer@example.test' },
+      subaccount: '7',
       currency: { id: '1', iso: 'RUB' },
       paymethod: {
         id: '9', module: 'pmanore.php', api_url: `${apiOrigin}/api/v1`, api_key: 'fixture-api-key',
         api_secret: 'fixture-api-secret', webhook_secret: secret, shop_id: '27', methods: 'sbp,card,crypto-old,card',
+        identity_source: 'email', franchise_enabled: 'off', franchise_type: '', franchise_address: '',
+        franchise_owner_telegram_id: '', franchise_owner_telegram_username: '',
       },
     },
     calls: [], credits: [], logs: [], failures: {},
@@ -398,6 +400,76 @@ try {
     assert.equal(recovered.calls.filter(call => call.command === 'payment.setpaid').length, 1)
   }, { change: value => { value.failStateWriteAfterCredit = true } })
 
+  await test('external identity uses the authoritative BILLmanager payment subaccount', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.user_identity, {
+      type: 'external_id', value: 'billmanager-client:7',
+    })
+    assert.equal('telegram_username' in apiRequests[0].body.user_identity, false)
+  }, { mapping: false, change: value => { value.payment.paymethod.identity_source = 'external_id' } })
+  for (const [name, subaccount] of [['absent', undefined], ['zero', '0'], ['signed', '+7'], ['leading-zero', '07'], ['non-numeric', 'client-7']]) {
+    await test(`external identity fails before network for ${name} payment subaccount`, async () => {
+      const response = await createPayment()
+      assert.notEqual(response.status, 302)
+      assert.equal(apiRequests.length, 0)
+    }, { mapping: false, change: value => {
+      value.payment.paymethod.identity_source = 'external_id'
+      if (subaccount === undefined) delete value.payment.subaccount
+      else value.payment.subaccount = subaccount
+      value.payment.client = { id: '999', email: 'must-not-be-used@example.test' }
+    } })
+  }
+  await test('email identity requires the guaranteed payment useremail and normalizes it', async () => {
+    await expectCreated()
+    assert.equal(apiRequests[0].body.email, 'customer@example.test')
+    assert.deepEqual(apiRequests[0].body.user_identity, { type: 'email', value: 'customer@example.test' })
+  }, { mapping: false, change: value => { value.payment.useremail = ' CUSTOMER@Example.Test ' } })
+  await test('invalid payment useremail fails before network access', async () => {
+    assert.notEqual((await createPayment()).status, 302)
+    assert.equal(apiRequests.length, 0)
+  }, { mapping: false, change: value => { value.payment.useremail = 'not-an-email' } })
+  await test('enabled Telegram franchise is canonical and included per payment', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.franchise, {
+      type: 'telegram_bot', address: 'branch_bot', owner_telegram_id: '9223372036854775807',
+      owner_telegram_username: 'branch_owner',
+    })
+  }, { mapping: false, change: value => {
+    Object.assign(value.payment.paymethod, {
+      franchise_enabled: 'on', franchise_type: 'telegram_bot', franchise_address: '@Branch_Bot',
+      franchise_owner_telegram_id: '9223372036854775807', franchise_owner_telegram_username: '@Branch_Owner',
+    })
+  } })
+  await test('enabled website franchise sends a canonical HTTPS origin', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.franchise, {
+      type: 'website', address: 'https://branch.example.com', owner_telegram_id: '987654321',
+    })
+  }, { mapping: false, change: value => {
+    Object.assign(value.payment.paymethod, {
+      franchise_enabled: 'yes', franchise_type: 'website', franchise_address: 'https://BRANCH.EXAMPLE.COM/',
+      franchise_owner_telegram_id: '987654321', franchise_owner_telegram_username: '',
+    })
+  } })
+  for (const [name, change] of [
+    ['signed Telegram ID', value => { value.payment.paymethod.franchise_owner_telegram_id = '+123' }],
+    ['overflowing Telegram ID', value => { value.payment.paymethod.franchise_owner_telegram_id = '9223372036854775808' }],
+    ['short owner username', value => { value.payment.paymethod.franchise_owner_telegram_username = '@four' }],
+    ['website path', value => { value.payment.paymethod.franchise_address = 'https://branch.example.com/path' }],
+    ['website port', value => { value.payment.paymethod.franchise_address = 'https://branch.example.com:443' }],
+    ['HTTP website', value => { value.payment.paymethod.franchise_address = 'http://branch.example.com' }],
+  ]) {
+    await test(`invalid franchise ${name} fails before network access`, async () => {
+      assert.notEqual((await createPayment()).status, 302)
+      assert.equal(apiRequests.length, 0)
+    }, { mapping: false, change: value => {
+      Object.assign(value.payment.paymethod, {
+        franchise_enabled: 'on', franchise_type: 'website', franchise_address: 'https://branch.example.com',
+        franchise_owner_telegram_id: '987654321', franchise_owner_telegram_username: '@branch_owner',
+      })
+      change(value)
+    } })
+  }
   await test('creation sends current fields, canonical methods and signed exact JSON over verified HTTPS', async () => {
     await expectCreated()
     assert.equal(apiRequests.length, 1)
@@ -407,6 +479,8 @@ try {
     assert.equal(request.headers.authorization, 'Bearer fixture-api-key')
     assert.equal(request.headers['x-zpay-signature'], createHmac('sha256', 'fixture-api-secret').update(request.raw).digest('hex'))
     assert.equal(request.body.email, 'customer@example.test')
+    assert.deepEqual(request.body.user_identity, { type: 'email', value: 'customer@example.test' })
+    assert.equal('franchise' in request.body, false)
     assert.equal(request.body.callbackUrl, 'https://billing.example.test/mancgi/anoreresult.php?payment=42')
     assert.equal(request.body.orderId, orderId)
     assert.equal(request.body.shopId, 27)
@@ -465,10 +539,14 @@ try {
     assert.ok(Math.abs(Date.parse(expiry) - Date.now() - 14400000) < 15000, expiry)
     await expectNoCredit()
   }, { mapping: false })
-  await test('parallel creation requests reuse one Anore invoice', async () => {
+  await test('parallel creation requests create one Anore invoice and safely retry lock contention', async () => {
     const responses = await Promise.all([createPayment(), createPayment(), createPayment()])
-    assert.deepEqual(responses.map(value => value.status), [302, 302, 302], JSON.stringify(responses))
-    assert.equal(new Set(responses.map(value => value.location)).size, 1)
+    assert.ok(responses.every(value => [302, 503].includes(value.status)), JSON.stringify(responses))
+    const successful = responses.filter(value => value.status === 302)
+    assert.ok(successful.length >= 1, JSON.stringify(responses))
+    const retries = await Promise.all(responses.filter(value => value.status === 503).map(() => createPayment()))
+    assert.ok(retries.every(value => value.status === 302), JSON.stringify(retries))
+    assert.equal(new Set([...successful, ...retries].map(value => value.location)).size, 1)
     assert.equal(apiRequests.length, 1)
     const attempts = JSON.parse(await readFile(path.join(stateDirectory, '42.json'), 'utf8')).attempts
     assert.equal(attempts.length, 1)
@@ -537,7 +615,6 @@ try {
     const value = await state()
     value.payment.email = 'changed@example.test'
     value.payment.useremail = 'changed@example.test'
-    value.payment.client.email = 'changed@example.test'
     await save(value)
     assert.equal((await createPayment()).status, 409)
     assert.equal(apiRequests.length, 1)
@@ -632,7 +709,56 @@ try {
     assert.notEqual((await createPayment()).status, 302)
     assert.equal(apiRequests.length, 1)
   }, { mapping: false })
-  await test('paymethod validation supplies a default API URL', async () => {
+  await test('paymethod config advertises pmtune and metadata provides select lists', async () => {
+    const config = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=config'], {
+      env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(config.status, 0, config.stderr)
+    assert.match(config.stdout, /<pmtune>on<\/pmtune>/)
+    const metadata = await readFile(path.join(manager, 'etc', 'xml', 'billmgr_mod_pmanore.php.xml'), 'utf8')
+    assert.match(metadata, /<select name="identity_source" required="yes"\s*\/>/)
+    assert.match(metadata, /<slist name="identity_source">[\s\S]*<val key="email">identity_source_email<\/val>[\s\S]*<val key="external_id">identity_source_external_id<\/val>/)
+    assert.match(metadata, /<select name="franchise_type"\s*\/>/)
+    assert.match(metadata, /<slist name="franchise_type">[\s\S]*<val key="telegram_bot">franchise_type_telegram_bot<\/val>[\s\S]*<val key="website">franchise_type_website<\/val>/)
+  }, { mapping: false })
+  await test('pmtune provisions safe context defaults without overwriting saved choices', async () => {
+    const empty = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmtune'], {
+      input: '<doc/>', env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(empty.status, 0, empty.stderr)
+    assert.match(empty.stdout, /<identity_source>email<\/identity_source>/)
+    assert.match(empty.stdout, /<franchise_enabled>off<\/franchise_enabled>/)
+    assert.match(empty.stdout, /<franchise_type>telegram_bot<\/franchise_type>/)
+    const saved = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmtune'], {
+      input: '<doc><identity_source>external_id</identity_source><franchise_enabled>on</franchise_enabled><franchise_type>website</franchise_type></doc>',
+      env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.match(saved.stdout, /<identity_source>external_id<\/identity_source>/)
+    assert.match(saved.stdout, /<franchise_enabled>on<\/franchise_enabled>/)
+    assert.match(saved.stdout, /<franchise_type>website<\/franchise_type>/)
+  }, { mapping: false })
+  await test('paymethod validation maps franchise errors to their actual fields', async () => {
+    for (const [field, value] of [
+      ['franchise_address', 'https://branch.example.com/path'],
+      ['franchise_owner_telegram_id', '+123'],
+    ]) {
+      const document = {
+        api_key: 'fixture-key', webhook_secret: 'fixture-secret', identity_source: 'email',
+        franchise_enabled: 'on', franchise_type: 'website', franchise_address: 'https://branch.example.com',
+        franchise_owner_telegram_id: '123456789',
+      }
+      document[field] = value
+      const xml = `<doc>${Object.entries(document).map(([name, entry]) => `<${name}>${entry}</${name}>`).join('')}</doc>`
+      const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
+        input: xml, env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+      })
+      assert.equal(validation.status, 0, validation.stderr)
+      assert.match(validation.stdout, new RegExp(`value: ${field}=`))
+      assert.doesNotMatch(validation.stdout, /value: franchise_enabled=/)
+    }
+  }, { mapping: false })
+  await test('paymethod validation supplies safe context defaults', async () => {
     const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
       input: '<doc><api_key>fixture-key</api_key><webhook_secret>fixture-secret</webhook_secret><methods>DVNET,xrocket</methods></doc>',
       env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
@@ -640,6 +766,8 @@ try {
     assert.equal(validation.status, 0, validation.stderr)
     assert.match(validation.stdout, /https:\/\/api\.anore\.cc/)
     assert.match(validation.stdout, /crypto/)
+    assert.match(validation.stdout, /<identity_source>email<\/identity_source>/)
+    assert.match(validation.stdout, /<franchise_enabled>off<\/franchise_enabled>/)
   }, { mapping: false })
   await test('recovery refuses a known UUID and leaves history untouched', async () => {
     await expectCreated()

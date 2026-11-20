@@ -21,9 +21,28 @@ try {
         $features->addChild('redirect', 'on');
         $features->addChild('notneedprofile', 'on');
         $features->addChild('pmvalidate', 'on');
+        $features->addChild('pmtune', 'on');
         $params = $config->addChild('param');
         $params->addChild('payment_script', '/mancgi/anorepayment.php');
         echo $config->asXML();
+        exit;
+    }
+
+    if ($command === 'pmtune') {
+        $form = simplexml_load_string((string) file_get_contents('php://stdin'));
+        if (!$form instanceof SimpleXMLElement) {
+            throw new ISPErrorException('value');
+        }
+        if (trim((string) $form->identity_source) === '') {
+            $form->identity_source = 'email';
+        }
+        if (trim((string) $form->franchise_enabled) === '') {
+            $form->franchise_enabled = 'off';
+        }
+        if (trim((string) $form->franchise_type) === '') {
+            $form->franchise_type = 'telegram_bot';
+        }
+        echo $form->asXML();
         exit;
     }
 
@@ -54,6 +73,21 @@ try {
             $form->methods = implode(',', anoreBmMethods((string) $form->methods));
         } catch (Throwable $error) {
             throw new ISPErrorException('value', 'methods', (string) $form->methods);
+        }
+        try {
+            $form->identity_source = anoreBmIdentitySource((string) $form->identity_source);
+        } catch (Throwable $error) {
+            throw new ISPErrorException('value', 'identity_source', (string) $form->identity_source);
+        }
+        try {
+            $enabled = anoreBmEnabled((string) $form->franchise_enabled);
+            $form->franchise_enabled = $enabled ? 'on' : 'off';
+            if ($enabled) {
+                anoreBmFranchise($form);
+            }
+        } catch (AnoreBmFieldException $error) {
+            $field = $error->field;
+            throw new ISPErrorException('value', $field, (string) $form->{$field});
         }
 
         echo $form->asXML();

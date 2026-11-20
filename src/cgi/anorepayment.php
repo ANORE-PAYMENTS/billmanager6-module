@@ -41,9 +41,12 @@ try {
             'failurl' => anoreBmManagerUrl($managerUrl, 'payment.fail', $paymentId),
             'callbackUrl' => anoreBmCallbackUrl($managerUrl, $paymentId),
         ];
-        $email = trim((string) $payment->useremail);
-        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $payload['email'] = $email;
+        $email = anoreBmEmail((string) $payment->useremail);
+        $payload['email'] = $email;
+        $payload['user_identity'] = anoreBmUserIdentity($payment, (string) $paymethod->identity_source);
+        $franchise = anoreBmFranchise($paymethod);
+        if ($franchise !== null) {
+            $payload['franchise'] = $franchise;
         }
         $shopId = trim((string) $paymethod->shop_id);
         if ($shopId !== '') {
