@@ -32,19 +32,13 @@
           <input type="text" name="methods"/>
         </field>
         <field name="identity_source">
-          <select name="identity_source" required="yes">
-            <option value="email">identity_source_email</option>
-            <option value="external_id">identity_source_external_id</option>
-          </select>
+          <select name="identity_source" required="yes"/>
         </field>
         <field name="franchise_enabled">
           <input type="checkbox" name="franchise_enabled"/>
         </field>
         <field name="franchise_type">
-          <select name="franchise_type">
-            <option value="telegram_bot">franchise_type_telegram_bot</option>
-            <option value="website">franchise_type_website</option>
-          </select>
+          <select name="franchise_type"/>
         </field>
         <field name="franchise_address">
           <input type="text" name="franchise_address"/>
@@ -58,6 +52,15 @@
       </page>
     </form>
   </metadata>
+
+  <slist name="identity_source">
+    <val key="email">identity_source_email</val>
+    <val key="external_id">identity_source_external_id</val>
+  </slist>
+  <slist name="franchise_type">
+    <val key="telegram_bot">franchise_type_telegram_bot</val>
+    <val key="website">franchise_type_website</val>
+  </slist>
 
   <lang name="ru">
     <messages name="label_paymethod">
@@ -78,7 +81,7 @@
       <msg name="methods">Методы оплаты</msg>
       <msg name="hint_methods">Необязательно: sbp,card,yoomoney,crypto,crypto-old. Пусто — настройки магазина; dvnet и xrocket тоже поддерживаются</msg>
       <msg name="identity_source">Источник user_identity</msg>
-      <msg name="hint_identity_source">Email безопасен по умолчанию. External ID использует стабильный ID клиента BILLmanager</msg>
+      <msg name="hint_identity_source">Email безопасен по умолчанию. External ID использует стабильный subaccount платежа BILLmanager</msg>
       <msg name="identity_source_email">Email пользователя</msg>
       <msg name="identity_source_external_id">Внешний ID клиента BILLmanager</msg>
       <msg name="franchise_enabled">Передавать франшизу для каждого платежа</msg>
@@ -114,7 +117,7 @@
       <msg name="methods">Payment methods</msg>
       <msg name="hint_methods">Optional: sbp,card,yoomoney,crypto,crypto-old. Empty uses the store settings; dvnet and xrocket aliases are supported</msg>
       <msg name="identity_source">user_identity source</msg>
-      <msg name="hint_identity_source">Email is the safe default. External ID uses the stable BILLmanager client ID</msg>
+      <msg name="hint_identity_source">Email is the safe default. External ID uses the stable BILLmanager payment subaccount</msg>
       <msg name="identity_source_email">User email</msg>
       <msg name="identity_source_external_id">BILLmanager client external ID</msg>
       <msg name="franchise_enabled">Send franchise on every payment</msg>

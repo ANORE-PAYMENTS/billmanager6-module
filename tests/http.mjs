@@ -39,7 +39,7 @@ function baseState() {
     payment: {
       id: '42', paymethodamount: '123.45', amount: '123.45', number: 'INV-42', status: '1', paid: 'off',
       manager_url: managerUrl, email: 'customer@example.test', useremail: 'customer@example.test', externalid: '',
-      client: { id: '7', email: 'customer@example.test' },
+      subaccount: '7',
       currency: { id: '1', iso: 'RUB' },
       paymethod: {
         id: '9', module: 'pmanore.php', api_url: `${apiOrigin}/api/v1`, api_key: 'fixture-api-key',
@@ -400,21 +400,25 @@ try {
     assert.equal(recovered.calls.filter(call => call.command === 'payment.setpaid').length, 1)
   }, { change: value => { value.failStateWriteAfterCredit = true } })
 
-  await test('external identity uses the authoritative BILLmanager client ID', async () => {
+  await test('external identity uses the authoritative BILLmanager payment subaccount', async () => {
     await expectCreated()
     assert.deepEqual(apiRequests[0].body.user_identity, {
       type: 'external_id', value: 'billmanager-client:7',
     })
     assert.equal('telegram_username' in apiRequests[0].body.user_identity, false)
   }, { mapping: false, change: value => { value.payment.paymethod.identity_source = 'external_id' } })
-  await test('external identity fails closed when a stable client ID is unavailable', async () => {
-    const response = await createPayment()
-    assert.notEqual(response.status, 302)
-    assert.equal(apiRequests.length, 0)
-  }, { mapping: false, change: value => {
-    value.payment.paymethod.identity_source = 'external_id'
-    value.payment.client.id = ''
-  } })
+  for (const [name, subaccount] of [['absent', undefined], ['zero', '0'], ['signed', '+7'], ['leading-zero', '07'], ['non-numeric', 'client-7']]) {
+    await test(`external identity fails before network for ${name} payment subaccount`, async () => {
+      const response = await createPayment()
+      assert.notEqual(response.status, 302)
+      assert.equal(apiRequests.length, 0)
+    }, { mapping: false, change: value => {
+      value.payment.paymethod.identity_source = 'external_id'
+      if (subaccount === undefined) delete value.payment.subaccount
+      else value.payment.subaccount = subaccount
+      value.payment.client = { id: '999', email: 'must-not-be-used@example.test' }
+    } })
+  }
   await test('email identity requires the guaranteed payment useremail and normalizes it', async () => {
     await expectCreated()
     assert.equal(apiRequests[0].body.email, 'customer@example.test')
@@ -701,6 +705,35 @@ try {
     apiResponseOverride = undefined
     assert.notEqual((await createPayment()).status, 302)
     assert.equal(apiRequests.length, 1)
+  }, { mapping: false })
+  await test('paymethod config advertises pmtune and metadata provides select lists', async () => {
+    const config = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=config'], {
+      env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(config.status, 0, config.stderr)
+    assert.match(config.stdout, /<pmtune>on<\/pmtune>/)
+    const metadata = await readFile(path.join(manager, 'etc', 'xml', 'billmgr_mod_pmanore.php.xml'), 'utf8')
+    assert.match(metadata, /<select name="identity_source" required="yes"\s*\/>/)
+    assert.match(metadata, /<slist name="identity_source">[\s\S]*<val key="email">identity_source_email<\/val>[\s\S]*<val key="external_id">identity_source_external_id<\/val>/)
+    assert.match(metadata, /<select name="franchise_type"\s*\/>/)
+    assert.match(metadata, /<slist name="franchise_type">[\s\S]*<val key="telegram_bot">franchise_type_telegram_bot<\/val>[\s\S]*<val key="website">franchise_type_website<\/val>/)
+  }, { mapping: false })
+  await test('pmtune provisions safe context defaults without overwriting saved choices', async () => {
+    const empty = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmtune'], {
+      input: '<doc/>', env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(empty.status, 0, empty.stderr)
+    assert.match(empty.stdout, /<identity_source>email<\/identity_source>/)
+    assert.match(empty.stdout, /<franchise_enabled>off<\/franchise_enabled>/)
+    assert.match(empty.stdout, /<franchise_type>telegram_bot<\/franchise_type>/)
+    const saved = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmtune'], {
+      input: '<doc><identity_source>external_id</identity_source><franchise_enabled>on</franchise_enabled><franchise_type>website</franchise_type></doc>',
+      env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
+    })
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.match(saved.stdout, /<identity_source>external_id<\/identity_source>/)
+    assert.match(saved.stdout, /<franchise_enabled>on<\/franchise_enabled>/)
+    assert.match(saved.stdout, /<franchise_type>website<\/franchise_type>/)
   }, { mapping: false })
   await test('paymethod validation supplies safe context defaults', async () => {
     const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
