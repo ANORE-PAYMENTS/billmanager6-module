@@ -44,6 +44,8 @@ function baseState() {
       paymethod: {
         id: '9', module: 'pmanore.php', api_url: `${apiOrigin}/api/v1`, api_key: 'fixture-api-key',
         api_secret: 'fixture-api-secret', webhook_secret: secret, shop_id: '27', methods: 'sbp,card,crypto-old,card',
+        identity_source: 'email', franchise_enabled: 'off', franchise_type: '', franchise_address: '',
+        franchise_owner_telegram_id: '', franchise_owner_telegram_username: '',
       },
     },
     calls: [], credits: [], logs: [], failures: {},
@@ -398,6 +400,72 @@ try {
     assert.equal(recovered.calls.filter(call => call.command === 'payment.setpaid').length, 1)
   }, { change: value => { value.failStateWriteAfterCredit = true } })
 
+  await test('external identity uses the authoritative BILLmanager client ID', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.user_identity, {
+      type: 'external_id', value: 'billmanager-client:7',
+    })
+    assert.equal('telegram_username' in apiRequests[0].body.user_identity, false)
+  }, { mapping: false, change: value => { value.payment.paymethod.identity_source = 'external_id' } })
+  await test('external identity fails closed when a stable client ID is unavailable', async () => {
+    const response = await createPayment()
+    assert.notEqual(response.status, 302)
+    assert.equal(apiRequests.length, 0)
+  }, { mapping: false, change: value => {
+    value.payment.paymethod.identity_source = 'external_id'
+    value.payment.client.id = ''
+  } })
+  await test('email identity requires the guaranteed payment useremail and normalizes it', async () => {
+    await expectCreated()
+    assert.equal(apiRequests[0].body.email, 'customer@example.test')
+    assert.deepEqual(apiRequests[0].body.user_identity, { type: 'email', value: 'customer@example.test' })
+  }, { mapping: false, change: value => { value.payment.useremail = ' CUSTOMER@Example.Test ' } })
+  await test('invalid payment useremail fails before network access', async () => {
+    assert.notEqual((await createPayment()).status, 302)
+    assert.equal(apiRequests.length, 0)
+  }, { mapping: false, change: value => { value.payment.useremail = 'not-an-email' } })
+  await test('enabled Telegram franchise is canonical and included per payment', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.franchise, {
+      type: 'telegram_bot', address: 'branch_bot', owner_telegram_id: '9223372036854775807',
+      owner_telegram_username: 'branch_owner',
+    })
+  }, { mapping: false, change: value => {
+    Object.assign(value.payment.paymethod, {
+      franchise_enabled: 'on', franchise_type: 'telegram_bot', franchise_address: '@Branch_Bot',
+      franchise_owner_telegram_id: '9223372036854775807', franchise_owner_telegram_username: '@Branch_Owner',
+    })
+  } })
+  await test('enabled website franchise sends a canonical HTTPS origin', async () => {
+    await expectCreated()
+    assert.deepEqual(apiRequests[0].body.franchise, {
+      type: 'website', address: 'https://branch.example.com', owner_telegram_id: '987654321',
+    })
+  }, { mapping: false, change: value => {
+    Object.assign(value.payment.paymethod, {
+      franchise_enabled: 'yes', franchise_type: 'website', franchise_address: 'https://BRANCH.EXAMPLE.COM/',
+      franchise_owner_telegram_id: '987654321', franchise_owner_telegram_username: '',
+    })
+  } })
+  for (const [name, change] of [
+    ['signed Telegram ID', value => { value.payment.paymethod.franchise_owner_telegram_id = '+123' }],
+    ['overflowing Telegram ID', value => { value.payment.paymethod.franchise_owner_telegram_id = '9223372036854775808' }],
+    ['short owner username', value => { value.payment.paymethod.franchise_owner_telegram_username = '@four' }],
+    ['website path', value => { value.payment.paymethod.franchise_address = 'https://branch.example.com/path' }],
+    ['website port', value => { value.payment.paymethod.franchise_address = 'https://branch.example.com:443' }],
+    ['HTTP website', value => { value.payment.paymethod.franchise_address = 'http://branch.example.com' }],
+  ]) {
+    await test(`invalid franchise ${name} fails before network access`, async () => {
+      assert.notEqual((await createPayment()).status, 302)
+      assert.equal(apiRequests.length, 0)
+    }, { mapping: false, change: value => {
+      Object.assign(value.payment.paymethod, {
+        franchise_enabled: 'on', franchise_type: 'website', franchise_address: 'https://branch.example.com',
+        franchise_owner_telegram_id: '987654321', franchise_owner_telegram_username: '@branch_owner',
+      })
+      change(value)
+    } })
+  }
   await test('creation sends current fields, canonical methods and signed exact JSON over verified HTTPS', async () => {
     await expectCreated()
     assert.equal(apiRequests.length, 1)
@@ -407,6 +475,8 @@ try {
     assert.equal(request.headers.authorization, 'Bearer fixture-api-key')
     assert.equal(request.headers['x-zpay-signature'], createHmac('sha256', 'fixture-api-secret').update(request.raw).digest('hex'))
     assert.equal(request.body.email, 'customer@example.test')
+    assert.deepEqual(request.body.user_identity, { type: 'email', value: 'customer@example.test' })
+    assert.equal('franchise' in request.body, false)
     assert.equal(request.body.callbackUrl, 'https://billing.example.test/mancgi/anoreresult.php?payment=42')
     assert.equal(request.body.orderId, orderId)
     assert.equal(request.body.shopId, 27)
@@ -632,7 +702,7 @@ try {
     assert.notEqual((await createPayment()).status, 302)
     assert.equal(apiRequests.length, 1)
   }, { mapping: false })
-  await test('paymethod validation supplies a default API URL', async () => {
+  await test('paymethod validation supplies safe context defaults', async () => {
     const validation = spawnSync(php, [path.join(manager, 'paymethods', 'pmanore.php'), '--command=pmvalidate'], {
       input: '<doc><api_key>fixture-key</api_key><webhook_secret>fixture-secret</webhook_secret><methods>DVNET,xrocket</methods></doc>',
       env: { ...process.env, BILLMANAGER_FIXTURE_STATE: stateFile }, encoding: 'utf8',
@@ -640,6 +710,8 @@ try {
     assert.equal(validation.status, 0, validation.stderr)
     assert.match(validation.stdout, /https:\/\/api\.anore\.cc/)
     assert.match(validation.stdout, /crypto/)
+    assert.match(validation.stdout, /<identity_source>email<\/identity_source>/)
+    assert.match(validation.stdout, /<franchise_enabled>off<\/franchise_enabled>/)
   }, { mapping: false })
   await test('recovery refuses a known UUID and leaves history untouched', async () => {
     await expectCreated()
