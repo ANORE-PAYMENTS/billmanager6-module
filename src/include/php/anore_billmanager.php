@@ -203,9 +203,9 @@ function anoreBmUserIdentity(SimpleXMLElement $payment, string $source): array
         return ['type' => 'email', 'value' => anoreBmEmail((string) $payment->useremail)];
     }
 
-    $clientId = trim((string) ($payment->client->id ?? ''));
+    $clientId = trim((string) $payment->subaccount);
     if (!preg_match('/^[1-9][0-9]{0,18}$/D', $clientId)) {
-        throw new AnoreBmRequestException(422, 'A stable BILLmanager client ID is unavailable');
+        throw new AnoreBmRequestException(422, 'A stable BILLmanager subaccount ID is unavailable');
     }
     return ['type' => 'external_id', 'value' => 'billmanager-client:' . $clientId];
 }
