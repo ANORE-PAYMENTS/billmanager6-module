@@ -50,7 +50,7 @@ jobs:
           scripts/build-release.sh dist/second
           cmp dist/first/billmanager6-module.tar.gz dist/second/billmanager6-module.tar.gz
           cmp dist/first/billmanager6-module.tar.gz.sha256 dist/second/billmanager6-module.tar.gz.sha256
-          sha256sum --check --directory dist/first dist/first/billmanager6-module.tar.gz.sha256
+          (cd dist/first && sha256sum --check billmanager6-module.tar.gz.sha256)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: billmanager6-module-${{ github.sha }}
