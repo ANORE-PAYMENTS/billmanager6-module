@@ -611,7 +611,6 @@ try {
     const value = await state()
     value.payment.email = 'changed@example.test'
     value.payment.useremail = 'changed@example.test'
-    value.payment.client.email = 'changed@example.test'
     await save(value)
     assert.equal((await createPayment()).status, 409)
     assert.equal(apiRequests.length, 1)
